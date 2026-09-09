@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Computer Vision - MediaPipe</title>
+  
+  <!-- MediaPipe CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    :root {
+      --bg-color: #0b0f19;
+      --card-bg: #161f30;
+      --accent-cyan: #00f2fe;
+      --accent-blue: #4facfe;
+      --border-color: #2a3b5c;
+      --text-color: #e0e6ed;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    header {
+      width: 100%;
+      max-width: 1200px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 12px;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      letter-spacing: 1px;
+      background: linear-gradient(90deg, var(--accent-cyan), var(--accent-blue));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .controls-panel {
+      display: flex;
+      gap: 20px;
+      background: var(--card-bg);
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      font-size: 0.85rem;
+    }
+
+    .control-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .control-item input[type="range"] {
+      width: 100px;
+      accent-color: var(--accent-cyan);
+    }
+
+    .main-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      width: 100%;
+      max-width: 1200px;
+      flex: 1;
+    }
+
+    .viewport-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      aspect-ratio: 4 / 3;
+    }
+
+    .canvas-wrapper {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #input_video {
+      display: none;
+    }
+
+    #output_canvas {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+
+    #target_image {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #050811;
+      transition: opacity 0.15s ease-in-out;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Computer Vision - MediaPipe</h1>
+    <div class="controls-panel">
+      <div class="control-item">
+        <label for="debounceSlider">延遲防抖 (Debounce):</label>
+        <input type="range" id="debounceSlider" min="50" max="600" step="50" value="200">
+        <span id="debounceVal">200ms</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="main-container">
+    <!-- 左視窗：即時影像 + 嘴唇內側線條 + 手部骨架 -->
+    <div class="viewport-card">
+      <div class="canvas-wrapper">
+        <video id="input_video" playsinline></video>
+        <canvas id="output_canvas" width="640" height="480"></canvas>
+      </div>
+    </div>
+
+    <!-- 右視窗：匹配顯示圖片 -->
+    <div class="viewport-card">
+      <div class="canvas-wrapper">
+        <img id="target_image" src="image0.png" alt="Output Image">
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const targetImage = document.getElementById('target_image');
+
+    const debounceSlider = document.getElementById('debounceSlider');
+    const debounceVal = document.getElementById('debounceVal');
+    let debounceDelay = parseInt(debounceSlider.value, 10);
+
+    debounceSlider.oninput = (e) => {
+      debounceDelay = parseInt(e.target.value, 10);
+      debounceVal.innerText = `${debounceDelay}ms`;
+    };
+
+    // 映射 0 到 6 圖片檔名
+    const images = {
+      0: 'image0.png',
+      1: 'image1.png',
+      2: 'image2.png',
+      3: 'image3.png',
+      4: 'image4.png',
+      5: 'image5.png',
+      6: 'image6.jpg'
+    };
+
+    let currentSlot = 0;
+    let pendingSlot = 0;
+    let debounceTimer = null;
+
+    function triggerSlot(slot) {
+      if (slot === currentSlot) {
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+          debounceTimer = null;
+        }
+        pendingSlot = slot;
+        return;
+      }
+
+      if (slot !== pendingSlot) {
+        pendingSlot = slot;
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          currentSlot = pendingSlot;
+          targetImage.src = images[currentSlot] || images[0];
+          debounceTimer = null;
+        }, debounceDelay);
+      }
+    }
+
+    // MediaPipe 嘴唇內側特徵點索引
+    const INNER_LIPS_INDICES = [
+      78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308,
+      324, 318, 402, 317, 14, 87, 178, 88, 95
+    ];
+
+    let latestHandLandmarks = [];
+    let latestFaceLandmarks = null;
+
+    // 手部識別
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    hands.onResults((results) => {
+      latestHandLandmarks = results.multiHandLandmarks || [];
+    });
+
+    // 面部識別
+    const faceMesh = new FaceMesh({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+    });
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: false,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    faceMesh.onResults((results) => {
+      latestFaceLandmarks = results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0
+        ? results.multiFaceLandmarks[0]
+        : null;
+      renderFrame(results.image);
+    });
+
+    // 核心特徵邏輯判定
+    function evaluateFeatures() {
+      const handsCount = latestHandLandmarks.length;
+
+      // 1. 雙手特徵判定
+      if (handsCount >= 2) {
+        const h1 = latestHandLandmarks[0];
+        const h2 = latestHandLandmarks[1];
+
+        // 雙手高舉過頭 (image4: 歡呼)
+        if (latestFaceLandmarks) {
+          const foreheadY = latestFaceLandmarks[10].y;
+          if (h1[0].y < foreheadY && h2[0].y < foreheadY) {
+            return 4;
+          }
+        }
+
+        // 雙手在胸前交叉 / 靠近 (image3: 叉胸)
+        const wristDist = Math.hypot(h1[0].x - h2[0].x, h1[0].y - h2[0].y);
+        if (wristDist < 0.25) {
+          return 3;
+        }
+      }
+
+      // 2. 單手特徵判定
+      if (handsCount >= 1) {
+        const hand = latestHandLandmarks[0];
+
+        // 手靠近頭頂/頭部兩側 (image5: 藍染摸頭)
+        if (latestFaceLandmarks) {
+          const headTop = latestFaceLandmarks[10];
+          const distToHead = Math.hypot(hand[8].x - headTop.x, hand[8].y - headTop.y);
+          if (distToHead < 0.22) {
+            return 5;
+          }
+        }
+
+        // 狐狸手勢 Kon: 食指(8)尾指(20)伸直，中指(12)無名指(16)靠近拇指(4) (image6)
+        const indexExtended = hand[8].y < hand[6].y;
+        const pinkyExtended = hand[20].y < hand[18].y;
+        const middleFolded = Math.hypot(hand[12].x - hand[4].x, hand[12].y - hand[4].y) < 0.12;
+        const ringFolded = Math.hypot(hand[16].x - hand[4].x, hand[16].y - hand[4].y) < 0.12;
+
+        if (indexExtended && pinkyExtended && middleFolded && ringFolded) {
+          return 6;
+        }
+
+        // 豎起大拇指 (image2: 我就爛)
+        const thumbUp = hand[4].y < hand[3].y && hand[3].y < hand[2].y;
+        const fingersFolded = hand[8].y > hand[6].y && hand[12].y > hand[10].y && hand[16].y > hand[14].y;
+        if (thumbUp && fingersFolded) {
+          return 2;
+        }
+      }
+
+      // 3. 面部表情判定
+      if (latestFaceLandmarks) {
+        const lm = latestFaceLandmarks;
+        // 嘴唇內側開合度與笑容寬度
+        const mouthHeight = Math.hypot(lm[13].x - lm[14].x, lm[13].y - lm[14].y);
+        const mouthWidth = Math.hypot(lm[78].x - lm[308].x, lm[78].y - lm[308].y);
+        const smileRatio = mouthHeight / mouthWidth;
+
+        // 咧嘴笑 (image1: 多佛朗明哥)
+        if (smileRatio > 0.35 || mouthWidth > 0.38) {
+          return 1;
+        }
+      }
+
+      // 待機/無動作 (image0: 卡比)
+      return 0;
+    }
+
+    function renderFrame(rawImage) {
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.drawImage(rawImage, 0, 0, canvasElement.width, canvasElement.height);
+
+      // 繪製手部骨架
+      for (const landmarks of latestHandLandmarks) {
+        drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00f2fe', lineWidth: 2 });
+        drawLandmarks(canvasCtx, landmarks, { color: '#ffffff', lineWidth: 1, radius: 2 });
+      }
+
+      // 繪製嘴唇內側線條
+      if (latestFaceLandmarks) {
+        canvasCtx.beginPath();
+        INNER_LIPS_INDICES.forEach((index, i) => {
+          const pt = latestFaceLandmarks[index];
+          const x = pt.x * canvasElement.width;
+          const y = pt.y * canvasElement.height;
+          if (i === 0) canvasCtx.moveTo(x, y);
+          else canvasCtx.lineTo(x, y);
+        });
+        canvasCtx.closePath();
+        canvasCtx.strokeStyle = '#00f2fe';
+        canvasCtx.lineWidth = 2.5;
+        canvasCtx.shadowColor = '#00f2fe';
+        canvasCtx.shadowBlur = 6;
+        canvasCtx.stroke();
+        canvasCtx.shadowBlur = 0;
+      }
+
+      // 觸發判斷
+      const targetSlot = evaluateFeatures();
+      triggerSlot(targetSlot);
+
+      canvasCtx.restore();
+    }
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await hands.send({ image: videoElement });
+        await faceMesh.send({ image: videoElement });
+      },
+      width: 640,
+      height: 480
+    });
+    camera.start();
+  </script>
+</body>
+</html>
