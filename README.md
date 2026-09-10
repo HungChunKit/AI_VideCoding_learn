@@ -1,16 +1,26 @@
-# 🎬 IG Reels 片代碼庫 & AI Prompts
+<div align="center">
+
+# 🎬 IG Reels Code Base & AI Prompts
+
+[繁體中文](#-繁體中文) | [English](#-english)
+
+</div>
+
+---
+
+## 🇭🇰 繁體中文
 
 > 💡 **專案說明**  
 > 呢個倉庫收錄嘅代碼**全部由 AI 生成、無經過人手修改**。主要用途係畀大家拎去整 IG 片／短片素材。  
 > 本人並非手打代碼專家，但對網頁與程式基本結構有些少概念。希望大家睇代碼之餘，亦可以理解下提示詞（Prompts）點樣運作。
 
-> **得閒先會更新下** 
-> **得閒先會更新下** 
+> **得閒先會更新下**  
+> **得閒先會更新下**  
 > **得閒先會更新下**
 
 ---
 
-## 📦 倉庫內容一覽
+### 📦 倉庫內容一覽
 
 | 類別 | 包含內容 | 建議用途 |
 | :--- | :--- | :--- |
@@ -19,9 +29,9 @@
 
 ---
 
-## 🚀 快速上手教學
+### 🚀 快速上手教學
 
-### 1. 前置準備
+#### 1. 前置準備
 請確保電腦已安裝以下工具：
 
 | 工具名稱 | 說明 | 備註 |
@@ -31,7 +41,7 @@
 
 ---
 
-### 2. 開啟與預覽步驟
+#### 2. 開啟與預覽步驟
 
 1. **下載 / Clone 專案**：將此倉庫下載至你的本機電腦。
 2. **使用 VS Code 開啟資料夾**：
@@ -44,6 +54,58 @@
 
 ---
 
-## 📌 注意事項
+### 📌 注意事項
 * 所有代碼均為 AI 原生輸出，若有特定需求建議直接參考 Prompt 並自行微調。
 * 歡迎自由 Fork、修改及發揮創意製作短影音！
+
+---
+
+## 🌐 English
+
+> 💡 **Project Overview**  
+> All code in this repository is **100% AI-generated with no manual refactoring**. It is designed as ready-to-use material for creating IG Reels and short-form video assets.  
+> While I do not manually write production code from scratch, I have a working knowledge of web and programming architectures. The goal is to provide functional code while demonstrating how structured prompts operate.
+
+> **Updated casually whenever I have free time.**  
+> **Updated casually whenever I have free time.**  
+> **Updated casually whenever I have free time.**
+
+---
+
+### 📦 Repository Contents
+
+| Category | Contents | Recommended Use Cases |
+| :--- | :--- | :--- |
+| **Web Code** | Vanilla HTML / CSS / JS codebases | Visual effects, interactive widgets, meme reel visuals |
+| **AI Prompts** | Full prompts used to generate the code | Prompt engineering references, iterations, and custom builds |
+
+---
+
+### 🚀 Quick Start Guide
+
+#### 1. Prerequisites
+Ensure the following tools are installed on your machine:
+
+| Tool | Description | Note |
+| :--- | :--- | :--- |
+| **VS Code** | Source code editor | [Official Download](https://code.visualstudio.com/) |
+| **Live Server** | VS Code Extension | Search `Live Server` in the Extensions Marketplace |
+
+---
+
+#### 2. Setup & Preview Steps
+
+1. **Download / Clone Repository**: Save this project repository to your local machine.
+2. **Open Workspace in VS Code**:
+   * Open VS Code ➡️ Click `File` ➡️ `Open Folder...`.
+   * ⚠️ **Important: Make sure to open the ENTIRE project folder rather than just a single `.html` file.**
+3. **Launch Live Server**:
+   * Open the target `.html` file inside VS Code.
+   * Click the **"Go Live"** button on the bottom status bar, or right-click anywhere in the editor and select **`Open with Live Server`**.
+   * A live preview will launch automatically in your default browser.
+
+---
+
+### 📌 Notes & Guidelines
+* All source code is raw AI output. For specific tweaks or edge cases, refer to the included Prompts to iterate further.
+* Feel free to fork, customize, and build your own creative short-form content!
