@@ -1,0 +1,23 @@
+我需要製作圖片中的影片
+
+1,用mediapipe
+
+2.會用手指生成一個方框,方框會將框內的物件變成馬賽克
+
+3.方框的右上角及左上角會以左右手食指為標準
+
+4.座標同步,避免方框與手指位置有偏移
+
+5.照舊用html檔案承載成舊嘢 左下/右下以左右手拇指尖為準
+
+I need to recreate the effect shown in the image:
+
+Use MediaPipe.
+
+Form a bounding box using fingers and apply a pixelated mosaic effect to everything inside the box.
+
+Use the left and right index fingertips as the top-left and top-right corners of the box.
+
+Ensure real-time coordinate synchronization to prevent any offset or lag between the box and the finger positions.
+
+Deliver the entire solution as a standalone HTML file as usual; the bottom-left and bottom-right corners should be anchored to the left and right thumb tips.
