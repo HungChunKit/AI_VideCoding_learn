@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MediaPipe 雙手框選手勢馬賽克效果</title>
+  
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: #121212;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    .container {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      max-width: 90vw;
+    }
+
+    .canvas-wrapper {
+      position: relative;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+      background: #000;
+    }
+
+    /* 隱藏原始 video 標籤，純用 canvas 渲染確保完全同步 */
+    #webcam {
+      display: none;
+    }
+
+    #output_canvas {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      transform: scaleX(-1); /* 水平翻轉以符合鏡像操作習慣 */
+    }
+
+    .status-bar {
+      margin-top: 15px;
+      font-size: 16px;
+      letter-spacing: 0.5px;
+      color: #b0bec5;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <div class="canvas-wrapper">
+      <video id="webcam" playsinline></video>
+      <canvas id="output_canvas"></canvas>
+    </div>
+    <div class="status-bar" id="status-text">
+      正在載入模型，請稍候...
+    </div>
+  </div>
+
+  <script>
+    const videoElement = document.getElementById('webcam');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const statusText = document.getElementById('status-text');
+
+    // 離屏 Canvas 用於快速運算馬賽克
+    const mosaicCanvas = document.createElement('canvas');
+    const mosaicCtx = mosaicCanvas.getContext('2d');
+
+    // 馬賽克顆粒大小（數值越小，像素塊越大、越模糊）
+    const PIXEL_SCALE = 0.05; 
+
+    // 初始化 MediaPipe Hands
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.6
+    });
+
+    hands.onResults(onResults);
+
+    function onResults(results) {
+      // 確保 Canvas 尺寸與攝影機解析度一致，避免座標縮放偏差
+      if (canvasElement.width !== results.image.width) {
+        canvasElement.width = results.image.width;
+        canvasElement.height = results.image.height;
+      }
+
+      const width = canvasElement.width;
+      const height = canvasElement.height;
+
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, width, height);
+
+      // 1. 繪製底層原始攝像鏡頭畫面
+      canvasCtx.drawImage(results.image, 0, 0, width, height);
+
+      // 2. 判斷是否有雙手，並定位左/右手頂點
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length === 2) {
+        statusText.innerText = "雙手已鎖定：正在套用方框馬賽克";
+
+        let leftHandLandmarks = null;
+        let rightHandLandmarks = null;
+
+        // 依據 handedness 分辨左右手
+        // 注意：鏡像情況下，畫面上看到的左側手與模型輸出的 Label 會有對應關係
+        for (let i = 0; i < results.multiHandedness.length; i++) {
+          const label = results.multiHandedness[i].label; // 'Left' 或 'Right'
+          if (label === 'Left') {
+            leftHandLandmarks = results.multiHandLandmarks[i];
+          } else if (label === 'Right') {
+            rightHandLandmarks = results.multiHandLandmarks[i];
+          }
+        }
+
+        // 當兩隻手都被精確辨識
+        if (leftHandLandmarks && rightHandLandmarks) {
+          // Landmark 8: 食指尖 (Index Finger Tip)
+          // Landmark 4: 拇指尖 (Thumb Tip)
+          
+          // 右上角: 右手食指尖
+          const pTopRight = {
+            x: rightHandLandmarks[8].x * width,
+            y: rightHandLandmarks[8].y * height
+          };
+          // 右下角: 右手拇指尖
+          const pBottomRight = {
+            x: rightHandLandmarks[4].x * width,
+            y: rightHandLandmarks[4].y * height
+          };
+          // 左上角: 左手食指尖
+          const pTopLeft = {
+            x: leftHandLandmarks[8].x * width,
+            y: leftHandLandmarks[8].y * height
+          };
+          // 左下角: 左手拇指尖
+          const pBottomLeft = {
+            x: leftHandLandmarks[4].x * width,
+            y: leftHandLandmarks[4].y * height
+          };
+
+          // 四邊形頂點路徑（順時針：左上 -> 右上 -> 右下 -> 左下）
+          const polygonPath = new Path2D();
+          polygonPath.moveTo(pTopLeft.x, pTopLeft.y);
+          polygonPath.lineTo(pTopRight.x, pTopRight.y);
+          polygonPath.lineTo(pBottomRight.x, pBottomRight.y);
+          polygonPath.lineTo(pBottomLeft.x, pBottomLeft.y);
+          polygonPath.closePath();
+
+          // 3. 處理馬賽克區域 (使用 Clip 限制在手指構成的區域內)
+          canvasCtx.save();
+          canvasCtx.clip(polygonPath);
+
+          // 將原圖縮小繪製至離屏 Canvas
+          const sw = Math.max(1, Math.floor(width * PIXEL_SCALE));
+          const sh = Math.max(1, Math.floor(height * PIXEL_SCALE));
+          mosaicCanvas.width = sw;
+          mosaicCanvas.height = sh;
+          mosaicCtx.drawImage(results.image, 0, 0, sw, sh);
+
+          // 關閉抗鋸齒以產生方塊像素顆粒效果
+          canvasCtx.imageSmoothingEnabled = false;
+          canvasCtx.drawImage(mosaicCanvas, 0, 0, sw, sh, 0, 0, width, height);
+          canvasCtx.restore();
+
+          // 4. 繪製藍色手勢邊框
+          canvasCtx.strokeStyle = "#00d2ff";
+          canvasCtx.lineWidth = 4;
+          canvasCtx.lineJoin = "round";
+          canvasCtx.stroke(polygonPath);
+        }
+      } else {
+        statusText.innerText = "模型載入完成，請用雙手食指與拇指擺出四方框。";
+      }
+
+      canvasCtx.restore();
+    }
+
+    // 啟動 WebRTC 攝像頭
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await hands.send({ image: videoElement });
+      },
+      width: 1280,
+      height: 720
+    });
+
+    camera.start().catch((err) => {
+      console.error("Camera access failed:", err);
+      statusText.innerText = "無法存取攝影機，請檢查權限設定。";
+    });
+  </script>
+</body>
+</html>
