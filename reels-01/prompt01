@@ -26,3 +26,28 @@
 
 OK的話，我會再改細節 
 
+
+
+Your Analysis:
+
+The image uses MediaPipe.
+
+It utilizes two separate Computer Vision views for display.
+
+An image is triggered and displayed when matching feature landmarks are detected.
+
+Your Implementation Plan:
+
+Replace the setup entirely with a single HTML file for convenience, running via VS Code Live Server.
+
+Include configurable detection delay/smoothing parameters to prevent rapid flickering/jittering (chattering).
+
+Design a professional-looking interface.
+
+Set the title to Computer Vision - MediaPipe.
+
+Seven images will be provided later (Image 0 to 6), where Image 0 represents the neutral/idle standby state; trigger conditions will match the images you provide.
+
+No hint text or on-screen prompt showing which expression maps to which image.
+
+Hands should display the full landmark skeleton, while the face should only display the inner lip contour lines.
