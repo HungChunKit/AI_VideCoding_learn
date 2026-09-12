@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>MediaPipe 雙手框選截圖與九宮格拼圖</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+    body {
+      background-color: #0f111a;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      color: #fff;
+    }
+    .container {
+      position: relative;
+      width: 1280px;
+      height: 720px;
+      background-color: #000;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.8);
+    }
+    #webcam {
+      display: none;
+    }
+    #game_canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 1280px;
+      height: 720px;
+      transform: scaleX(-1); /* 鏡像翻轉 */
+    }
+    /* 頂部引導 HUD */
+    .hud-panel {
+      position: absolute;
+      top: 15px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 20, 30, 0.85);
+      border: 1px solid rgba(0, 255, 200, 0.4);
+      backdrop-filter: blur(8px);
+      padding: 10px 30px;
+      border-radius: 30px;
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      color: #00ffc8;
+      z-index: 10;
+      box-shadow: 0 4px 15px rgba(0, 255, 200, 0.2);
+    }
+    /* 操作重置按鈕 */
+    .reset-btn {
+      position: absolute;
+      bottom: 20px;
+      right: 25px;
+      background: #ff4757;
+      color: white;
+      border: none;
+      padding: 10px 22px;
+      font-size: 16px;
+      font-weight: bold;
+      border-radius: 8px;
+      cursor: pointer;
+      z-index: 10;
+      transition: 0.2s;
+    }
+    .reset-btn:hover {
+      background: #ff6b81;
+      transform: scale(1.05);
+    }
+  </style>
+
+  <!-- MediaPipe Hands & Camera Utils CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+  <div class="container">
+    <video id="webcam" playsinline></video>
+    <canvas id="game_canvas" width="1280" height="720"></canvas>
+    <div class="hud-panel" id="instruction">請伸出雙手：食指在上、拇指在下框出截圖範圍</div>
+    <button class="reset-btn" id="reset_btn" style="display:none;" onclick="resetToCrop()">重新截圖</button>
+  </div>
+
+  <script>
+    const videoElement = document.getElementById('webcam');
+    const canvasElement = document.getElementById('game_canvas');
+    const canvasCtx = canvasElement.getContext('2d', { alpha: false });
+    const instructionEl = document.getElementById('instruction');
+    const resetBtn = document.getElementById('reset_btn');
+
+    // 遊戲狀態機: 'CROPPING' (框選截圖) | 'PLAYING' (拼圖中) | 'WIN' (通關)
+    let gameState = 'CROPPING';
+
+    // 截圖計時與位置追蹤
+    let holdStartTime = null;
+    const HOLD_DURATION = 2000; // 穩定保持 2 秒 (ms)
+    let lastBox = null;
+
+    // 拼圖盤配置 (中央 480x480)
+    const BOARD_SIZE = 480;
+    const BOARD_X = (1280 - BOARD_SIZE) / 2;
+    const BOARD_Y = (720 - BOARD_SIZE) / 2 + 30;
+    const TILE_SIZE = BOARD_SIZE / 3;
+
+    // 拼圖切片資料
+    let puzzleTiles = [];   // 原始切片 Canvas (index 0~8)
+    let boardState = [];    // 盤面上每個位置目前放置的拼圖編號
+    let draggingTileIndex = null; // 當前被捏住拖曳的槽位索引
+    let pinchPos = { x: 0, y: 0 };
+    let isPinching = false;
+
+    // 離線 Canvas 用於存儲截圖
+    const captureCanvas = document.createElement('canvas');
+    const captureCtx = captureCanvas.getContext('2d');
+
+    // 判定兩點距離 (用於拇指與食指捏合 Pinch 偵測)
+    function getDistance(p1, p2) {
+      return Math.hypot((p1.x - p2.x) * 1280, (p1.y - p2.y) * 720);
+    }
+
+    // 檢查是否所有拼圖歸位
+    function checkWin() {
+      for (let i = 0; i < 9; i++) {
+        if (boardState[i] !== i) return false;
+      }
+      return true;
+    }
+
+    // 執行截圖並打亂生成九宮格
+    function sliceAndStartGame(box) {
+      captureCanvas.width = box.w;
+      captureCanvas.height = box.h;
+      // 從鏡頭抓取框選區域
+      captureCtx.drawImage(
+        videoElement,
+        (1 - box.x / 1280 - box.w / 1280) * videoElement.videoWidth, // 鏡像校正截圖位置
+        (box.y / 720) * videoElement.videoHeight,
+        (box.w / 1280) * videoElement.videoWidth,
+        (box.h / 720) * videoElement.videoHeight,
+        0, 0, box.w, box.h
+      );
+
+      // 切成 3x3 共 9 塊
+      puzzleTiles = [];
+      const sw = box.w / 3;
+      const sh = box.h / 3;
+      for (let row = 0; row < 3; row++) {
+        for (let col = 0; col < 3; col++) {
+          const tCanvas = document.createElement('canvas');
+          tCanvas.width = TILE_SIZE;
+          tCanvas.height = TILE_SIZE;
+          const tCtx = tCanvas.getContext('2d');
+          tCtx.drawImage(
+            captureCanvas,
+            col * sw, row * sh, sw, sh,
+            0, 0, TILE_SIZE, TILE_SIZE
+          );
+          puzzleTiles.push(tCanvas);
+        }
+      }
+
+      // 打亂九宮格 (確保不是剛好解開的狀態)
+      boardState = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+      do {
+        boardState.sort(() => Math.random() - 0.5);
+      } while (checkWin());
+
+      gameState = 'PLAYING';
+      resetBtn.style.display = 'block';
+      instructionEl.innerText = "【拼圖開始】用食指與拇指捏合 (Pinch) 抓取並拖曳拼圖！";
+    }
+
+    function resetToCrop() {
+      gameState = 'CROPPING';
+      holdStartTime = null;
+      lastBox = null;
+      resetBtn.style.display = 'none';
+      instructionEl.innerText = "請伸出雙手：食指在上、拇指在下框出截圖範圍";
+    }
+
+    // 主迴圈渲染
+    function onResults(results) {
+      canvasCtx.save();
+      // 繪製視訊背景
+      canvasCtx.drawImage(results.image, 0, 0, 1280, 720);
+
+      const landmarksList = results.multiHandLandmarks || [];
+
+      // ===========================
+      // 階段 1: 雙手框選截圖
+      // ===========================
+      if (gameState === 'CROPPING') {
+        if (landmarksList.length === 2) {
+          // 取得雙手的食指尖 (8) 與 拇指尖 (4)
+          const pts = [];
+          for (const lm of landmarksList) {
+            pts.push(lm[8]); // 食指指尖
+            pts.push(lm[4]); // 拇指指尖
+          }
+
+          // 計算外接矩形
+          const xs = pts.map(p => p.x * 1280);
+          const ys = pts.map(p => p.y * 720);
+          const minX = Math.min(...xs);
+          const maxX = Math.max(...xs);
+          const minY = Math.min(...ys);
+          const maxY = Math.max(...ys);
+          const w = maxX - minX;
+          const h = maxY - minY;
+
+          if (w > 120 && h > 120) {
+            // 繪製框選外框
+            canvasCtx.strokeStyle = "#00ffc8";
+            canvasCtx.lineWidth = 4;
+            canvasCtx.strokeRect(minX, minY, w, h);
+
+            // 框選角落四個點標示
+            canvasCtx.fillStyle = "#ff0055";
+            for (const p of pts) {
+              canvasCtx.beginPath();
+              canvasCtx.arc(p.x * 1280, p.y * 720, 8, 0, Math.PI * 2);
+              canvasCtx.fill();
+            }
+
+            // 判斷穩定度
+            const currentBox = { x: minX, y: minY, w: w, h: h };
+            if (!lastBox || (Math.hypot(currentBox.x - lastBox.x, currentBox.y - lastBox.y) < 35)) {
+              if (!holdStartTime) holdStartTime = Date.now();
+              const elapsed = Date.now() - holdStartTime;
+              const progress = Math.min(1.0, elapsed / HOLD_DURATION);
+
+              // 繪製中心圓形倒數進度環
+              const cx = minX + w / 2;
+              const cy = minY + h / 2;
+              canvasCtx.beginPath();
+              canvasCtx.arc(cx, cy, 40, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+              canvasCtx.strokeStyle = "#ffe600";
+              canvasCtx.lineWidth = 8;
+              canvasCtx.stroke();
+
+              instructionEl.innerText = `📷 保持穩定中... ${((HOLD_DURATION - elapsed)/1000).toFixed(1)}s`;
+
+              if (progress >= 1.0) {
+                sliceAndStartGame(currentBox);
+              }
+            } else {
+              holdStartTime = null;
+            }
+            lastBox = currentBox;
+          }
+        } else {
+          holdStartTime = null;
+          instructionEl.innerText = "請在鏡頭中同時露出【雙手】比出方框";
+        }
+      }
+
+      // ===========================
+      // 階段 2: 拼圖遊戲與手勢互動
+      // ===========================
+      else if (gameState === 'PLAYING' || gameState === 'WIN') {
+        // 半透明黑色背景聚焦拼圖盤
+        canvasCtx.fillStyle = "rgba(0, 0, 0, 0.65)";
+        canvasCtx.fillRect(0, 0, 1280, 720);
+
+        // 繪製 3x3 網格與拼圖
+        for (let i = 0; i < 9; i++) {
+          const row = Math.floor(i / 3);
+          const col = i % 3;
+          const gx = BOARD_X + col * TILE_SIZE;
+          const gy = BOARD_Y + row * TILE_SIZE;
+
+          // 繪製底槽
+          canvasCtx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+          canvasCtx.lineWidth = 2;
+          canvasCtx.strokeRect(gx, gy, TILE_SIZE, TILE_SIZE);
+
+          // 繪製未被拖曳的拼圖塊
+          const tileId = boardState[i];
+          if (tileId !== null && i !== draggingTileIndex) {
+            canvasCtx.drawImage(puzzleTiles[tileId], gx, gy, TILE_SIZE, TILE_SIZE);
+          }
+        }
+
+        // 偵測手部捏合 (Pinch) 操作
+        let activePinch = false;
+        let pinchCenter = null;
+
+        if (landmarksList.length > 0) {
+          const hand = landmarksList[0]; // 主要使用第一隻手
+          const thumbTip = hand[4];
+          const indexTip = hand[8];
+          const dist = getDistance(thumbTip, indexTip);
+
+          pinchCenter = {
+            x: ((thumbTip.x + indexTip.x) / 2) * 1280,
+            y: ((thumbTip.y + indexTip.y) / 2) * 720
+          };
+
+          // 繪製游標指示器 (捏合為綠色，張開為紅色)
+          activePinch = (dist < 45); // 捏合閾值
+          canvasCtx.beginPath();
+          canvasCtx.arc(pinchCenter.x, pinchCenter.y, activePinch ? 16 : 10, 0, Math.PI * 2);
+          canvasCtx.fillStyle = activePinch ? "#00ff88" : "#ff3366";
+          canvasCtx.fill();
+          canvasCtx.strokeStyle = "#ffffff";
+          canvasCtx.lineWidth = 3;
+          canvasCtx.stroke();
+        }
+
+        // 處理拖曳抓取與釋放邏輯
+        if (gameState === 'PLAYING') {
+          if (activePinch && pinchCenter) {
+            // 如果剛捏下且尚未抓取拼圖
+            if (draggingTileIndex === null) {
+              for (let i = 0; i < 9; i++) {
+                const row = Math.floor(i / 3);
+                const col = i % 3;
+                const gx = BOARD_X + col * TILE_SIZE;
+                const gy = BOARD_Y + row * TILE_SIZE;
+
+                if (pinchCenter.x >= gx && pinchCenter.x <= gx + TILE_SIZE &&
+                    pinchCenter.y >= gy && pinchCenter.y <= gy + TILE_SIZE) {
+                  draggingTileIndex = i; // 抓取該格子的拼圖
+                  break;
+                }
+              }
+            }
+            pinchPos = pinchCenter;
+          } else {
+            // 鬆開捏合：進行放置與交換 (Swap)
+            if (draggingTileIndex !== null && pinchPos) {
+              let targetIndex = null;
+              for (let i = 0; i < 9; i++) {
+                const row = Math.floor(i / 3);
+                const col = i % 3;
+                const gx = BOARD_X + col * TILE_SIZE;
+                const gy = BOARD_Y + row * TILE_SIZE;
+
+                if (pinchPos.x >= gx && pinchPos.x <= gx + TILE_SIZE &&
+                    pinchPos.y >= gy && pinchPos.y <= gy + TILE_SIZE) {
+                  targetIndex = i;
+                  break;
+                }
+              }
+
+              // 交換兩格拼圖
+              if (targetIndex !== null && targetIndex !== draggingTileIndex) {
+                const temp = boardState[draggingTileIndex];
+                boardState[draggingTileIndex] = boardState[targetIndex];
+                boardState[targetIndex] = temp;
+
+                if (checkWin()) {
+                  gameState = 'WIN';
+                  instructionEl.innerText = "🎉 太棒了！拼圖成功完成！";
+                }
+              }
+              draggingTileIndex = null;
+            }
+          }
+
+          // 繪製被抓取的拼圖跟隨手指移動 (加放大與陰影效果)
+          if (draggingTileIndex !== null) {
+            const tileId = boardState[draggingTileIndex];
+            canvasCtx.save();
+            canvasCtx.shadowColor = "rgba(0, 255, 200, 0.8)";
+            canvasCtx.shadowBlur = 20;
+            canvasCtx.drawImage(
+              puzzleTiles[tileId],
+              pinchPos.x - (TILE_SIZE * 1.1) / 2,
+              pinchPos.y - (TILE_SIZE * 1.1) / 2,
+              TILE_SIZE * 1.1,
+              TILE_SIZE * 1.1
+            );
+            canvasCtx.restore();
+          }
+        }
+
+        // 通關特效
+        if (gameState === 'WIN') {
+          canvasCtx.strokeStyle = "#ffe600";
+          canvasCtx.lineWidth = 8;
+          canvasCtx.strokeRect(BOARD_X, BOARD_Y, BOARD_SIZE, BOARD_SIZE);
+        }
+      }
+
+      canvasCtx.restore();
+    }
+
+    // 初始化 MediaPipe Hands 模型
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 2,           // 支援雙手以進行框選與單手拼圖
+      modelComplexity: 0,       // 0: 輕量快速模式，保證低延遲
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.6
+    });
+
+    hands.onResults(onResults);
+
+    // 啟動攝影機 (推論以 640x360 進行以獲得最高流暢度)
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await hands.send({ image: videoElement });
+      },
+      width: 640,
+      height: 360
+    });
+
+    camera.start();
+  </script>
+</body>
+</html>
